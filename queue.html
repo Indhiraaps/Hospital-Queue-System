@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Queue | Smart Hospital</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        /* Small style for the debug button */
+        .voice-unlock {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #64748b;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 50px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            opacity: 0.7;
+        }
+        .voice-unlock:hover { opacity: 1; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 style="margin-bottom: 0;">Hospital Live Queue</h1>
+        <p style="text-align: center; color: #64748b; margin-top: 5px;">Real-time updates & Voice alerts enabled</p>
+
+        <div id="servingSection" class="card" style="border: 4px solid var(--success); background: #f0fdf4;">
+            <h3 style="text-align: center; margin-top: 0; color: var(--success);">NOW SERVING</h3>
+            <div id="nowServing" class="serving-now">--</div>
+            <div id="servingName" style="text-align: center; font-weight: bold; color: #166534;"></div>
+        </div>
+
+        <div id="queueList">
+            <h3>Upcoming Tokens</h3>
+        </div>
+    </div>
+
+    <button class="voice-unlock" onclick="testVoice()">🔈 Test Voice / Enable Audio</button>
+
+    <script src="app.js"></script>
+
+    <script>
+        let lastAnnouncementId = null;
+        let lastUpdateTime = null;
+
+        // FEATURE: Voice Announcement
+        function announceToken(servingPatient) {
+            if (!servingPatient) return;
+
+            const currentId = servingPatient.id;
+            // Fallback: If updated_at is missing, use a random string to force a change
+            const currentUpdate = servingPatient.updated_at || Date.now().toString();
+            
+            // Check if this is the same event
+            if (currentId === lastAnnouncementId && currentUpdate === lastUpdateTime) {
+                return; 
+            }
+
+            // --- SOUND ENGINE START ---
+            window.speechSynthesis.cancel(); // Clears any stuck audio
+
+            const msg = new SpeechSynthesisUtterance();
+            msg.text = `Token number ${servingPatient.token_number}, ${servingPatient.patient_name}, please proceed to the doctor's cabin.`;
+            
+            // Voices can sometimes fail to load. This line ensures a default voice is used.
+            msg.voice = window.speechSynthesis.getVoices()[0]; 
+            msg.rate = 0.885; 
+            msg.volume = 1;
+            
+            console.log("📢 System is calling:", servingPatient.patient_name);
+            window.speechSynthesis.speak(msg);
+            
+            lastAnnouncementId = currentId;
+            lastUpdateTime = currentUpdate;
+        }
+
+        // Test function to unlock audio and check speakers
+        function testVoice() {
+            window.speechSynthesis.cancel();
+            const msg = new SpeechSynthesisUtterance("Voice system is active.");
+            window.speechSynthesis.speak(msg);
+            alert("If you heard the voice, your browser audio is unlocked. Now try calling a patient from the Doctor Dashboard.");
+        }
+
+        function formatName(name) {
+            if (!name) return "";
+            const parts = name.split(" ");
+            if (parts.length < 2) return name;
+            return `${parts[0]} ${parts[1][0]}.`; 
+        }
+
+        async function updateUI() {
+            try {
+                const queue = await getQueue();
+                const serving = queue.find(p => p.status === 'serving');
+                const waiting = queue.filter(p => p.status === 'waiting');
+
+                if (serving) {
+                    document.getElementById('nowServing').innerText = `Token #${serving.token_number}`;
+                    document.getElementById('servingName').innerText = formatName(serving.patient_name);
+                    announceToken(serving);
+                } else {
+                    document.getElementById('nowServing').innerText = "Waiting...";
+                    document.getElementById('servingName').innerText = "";
+                    lastAnnouncementId = null; 
+                    lastUpdateTime = null;
+                }
+                
+                let html = '';
+                waiting.forEach((p, index) => {
+                    const position = index + 1; 
+                    const waitTime = position * 10;
+                    html += `
+                        <div class="card" style="display: flex; justify-content: space-between; align-items: center; border-left: 5px solid ${p.priority === 'emergency' ? 'var(--emergency)' : 'var(--primary)'};">
+                            <div>
+                                <strong style="font-size: 1.3rem;">Token #${p.token_number}</strong>
+                                <div style="color: #64748b; font-size: 0.9rem;">Patient: ${formatName(p.patient_name)}</div>
+                            </div>
+                            <div style="text-align: right;">
+                                <span class="badge ${p.priority === 'emergency' ? 'bg-emergency' : 'bg-normal'}">Pos: ${position}</span>
+                                <div style="font-size: 0.9rem; color: #ef4444; font-weight: bold; margin-top: 5px;">~${waitTime} mins</div>
+                            </div>
+                        </div>`;
+                });
+                document.getElementById('queueList').innerHTML = html || '<div style="text-align:center; padding: 20px; color: #94a3b8;">No patients currently waiting.</div>';
+            } catch (err) {
+                console.error("UI Update Error:", err);
+            }
+        }
+
+        // REALTIME SUBSCRIPTION
+        db.channel('queue-updates')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, (payload) => {
+                console.log('Database Change Detected:', payload);
+                updateUI();
+            })
+            .subscribe();
+
+        updateUI();
+    </script>
+</body>
+</html>

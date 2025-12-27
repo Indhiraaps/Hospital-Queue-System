@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Doctor Dashboard | Smart Hospital</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>Doctor Dashboard</h1>
+        
+        <div id="controls" class="card" style="text-align:center; border-left: 10px solid var(--success);">
+            <h3 style="margin-top:0;">Currently Serving</h3>
+            
+            <div id="sessionTimer" style="font-weight: bold; color: var(--text-muted); font-size: 1.1rem; margin-bottom: 5px;">
+                Session Time: 00:00
+            </div>
+
+            <div id="currentPatientName" style="padding: 10px 0;">
+                <p>Loading current patient...</p>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
+                <button id="mainActionBtn" onclick="markComplete()" style="background:var(--success); font-size: 1.1rem;">
+                    ✅ Complete Current Session
+                </button>
+                
+                <div style="display: flex; gap: 10px;">
+                    <button onclick="recallPatient()" style="background:var(--primary); flex: 1; font-size: 1rem;">
+                        📢 Call Again
+                    </button>
+                    <button onclick="skipPatient()" style="background:var(--warning); flex: 1; font-size: 1rem; color: white;">
+                        ⏭️ Skip (Not Available)
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <hr style="margin: 2rem 0; border: 0; border-top: 1px solid #e2e8f0;">
+
+        <h3>Upcoming Queue Management</h3>
+        <p style="font-size: 0.9rem; color: #64748b;">Click "Serve Now" to announce a patient.</p>
+        <div id="adminQueue"></div>
+    </div>
+
+    <div id="toast">Update Successful!</div>
+
+    <script src="app.js"></script>
+    
+    <script>
+        let timerInterval;
+        let startTime;
+
+        function startTimer() {
+            clearInterval(timerInterval);
+            startTime = Date.now();
+            timerInterval = setInterval(() => {
+                const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                const mins = String(Math.floor(elapsed / 60)).padStart(2, '0');
+                const secs = String(elapsed % 60).padStart(2, '0');
+                document.getElementById('sessionTimer').innerText = `Session Time: ${mins}:${secs}`;
+            }, 1000);
+        }
+
+        function showToast(message, isError = false) {
+            const toast = document.getElementById("toast");
+            toast.innerText = message;
+            toast.style.backgroundColor = isError ? "var(--emergency)" : "#334155";
+            toast.className = "show";
+            setTimeout(() => { toast.className = ""; }, 3000);
+        }
+
+        async function loadDashboard() {
+            const queue = await getQueue();
+            const serving = queue.find(p => p.status === 'serving');
+            
+            if (serving) {
+                document.getElementById('currentPatientName').innerHTML = `
+                    <h2 style="margin:0; color: var(--primary);">Token #${serving.token_number}: ${serving.patient_name}</h2>
+                    <p style="margin: 5px 0;"><strong>Issue:</strong> ${serving.issue}</p>
+                    <span class="badge ${serving.priority === 'emergency' ? 'bg-emergency' : 'bg-normal'}">${serving.priority}</span>`;
+                startTimer();
+            } else {
+                document.getElementById('currentPatientName').innerHTML = "<h2 style='color:#94a3b8;'>Ready for next patient</h2>";
+                clearInterval(timerInterval);
+                document.getElementById('sessionTimer').innerText = "Session Time: 00:00";
+            }
+
+            let html = '';
+            const waitingList = queue.filter(p => p.status === 'waiting');
+            
+            waitingList.forEach(p => {
+                html += `
+                    <div class="card" style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <strong style="font-size: 1.2rem;">#${p.token_number} - ${p.patient_name}</strong>
+                            <br>
+                            <span class="badge ${p.priority === 'emergency' ? 'bg-emergency' : 'bg-normal'}">${p.priority}</span>
+                        </div>
+                        <button onclick="servePatient('${p.id}', '${p.patient_name}')" style="width:auto; padding:8px 15px; background:#475569;">
+                            Serve Now
+                        </button>
+                    </div>`;
+            });
+            
+            document.getElementById('adminQueue').innerHTML = html || '<p style="text-align:center; color:#64748b;">No patients waiting.</p>';
+        }
+
+        async function servePatient(id, name) {
+            // Mark others complete and start new serving with a fresh timestamp
+            await db.from('appointments').update({ status: 'completed' }).eq('status', 'serving');
+            const { error } = await db.from('appointments').update({ 
+                status: 'serving',
+                updated_at: new Date().toISOString() 
+            }).eq('id', id);
+            
+            if (error) {
+                showToast("Error starting session", true);
+            } else {
+                showToast(`Calling: ${name}`);
+            }
+        }
+
+        async function markComplete() {
+            const btn = document.getElementById('mainActionBtn');
+            btn.disabled = true;
+            const { error } = await db.from('appointments').update({ status: 'completed' }).eq('status', 'serving');
+            if (error) { showToast("Error finishing session", true); } 
+            else { showToast("Session marked as completed."); }
+            btn.disabled = false;
+        }
+
+        // UPDATED: Forces a unique timestamp change to trigger Realtime Voice
+        async function recallPatient() {
+            const queue = await getQueue();
+            const serving = queue.find(p => p.status === 'serving');
+            if (!serving) return showToast("No active patient to call", true);
+            
+            const { error } = await db.from('appointments')
+                .update({ updated_at: new Date().toISOString() })
+                .eq('id', serving.id);
+
+            if (error) {
+                showToast("Error re-calling patient", true);
+            } else {
+                showToast(`📢 Re-calling Token #${serving.token_number}...`);
+            }
+        }
+
+        async function skipPatient() {
+            const serving = (await getQueue()).find(p => p.status === 'serving');
+            if (!serving) return showToast("No active patient to skip", true);
+
+            await db.from('appointments').update({ status: 'waiting' }).eq('id', serving.id);
+            showToast("Patient moved back to queue.");
+        }
+
+        db.channel('doctor-updates')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, () => {
+            loadDashboard();
+        })
+        .subscribe();
+
+        loadDashboard();
+    </script>
+</body>
+</html>

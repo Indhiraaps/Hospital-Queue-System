@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Book Appointment | Smart Hospital</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>🏥 Hospital Booking</h1>
+        <form id="bookingForm">
+            <label>Patient Name</label>
+            <input type="text" id="patientName" placeholder="Enter Full Name" required>
+            
+            <label>Chief Complaint (Issue)</label>
+            <input type="text" id="issue" placeholder="e.g. Chest Pain, Routine Checkup" required>
+            
+            <label>Priority Level</label>
+            <select id="priority">
+                <option value="normal">Normal (Routine)</option>
+                <option value="emergency">🚨 EMERGENCY</option>
+            </select>
+            
+            <button type="submit" id="bookBtn">Get Token</button>
+        </form>
+
+        <div id="receipt" style="display:none; text-align:center; margin-top:20px;" class="card">
+            <h2 style="margin-bottom: 10px;">Booking Confirmed!</h2>
+            <div style="background: #f8fafc; padding: 20px; border-radius: 12px; border: 2px dashed #cbd5e1;">
+                <span style="font-size: 0.9rem; color: #64748b; text-transform: uppercase; letter-spacing: 1px;">Your Token Number</span>
+                <span id="tokenDisplay" style="color: var(--primary); font-size: 4rem; display: block; font-weight: 800; line-height: 1;"></span>
+            </div>
+            <p style="margin-top: 15px; color: #475569;">Please keep this screen open or proceed to the waiting area.</p>
+            <hr style="margin: 20px 0; border: 0; border-top: 1px solid #e2e8f0;">
+            <a href="queue.html" style="text-decoration: none; color: var(--primary); font-weight: bold; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                <span>View Live Queue Status</span> 
+                <span style="font-size: 1.2rem;">→</span>
+            </a>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    
+    <script>
+        document.getElementById('bookingForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('bookBtn');
+            btn.innerText = "Generating Token...";
+            btn.disabled = true;
+
+            try {
+                // 1. Logic for Daily Reset: Get the start of the current day in ISO format
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const startOfToday = today.toISOString();
+
+                // 2. Count how many patients registered TODAY
+                const { count, error: countError } = await db
+                    .from('appointments')
+                    .select('*', { count: 'exact', head: true })
+                    .gte('created_at', startOfToday);
+
+                if (countError) throw countError;
+
+                // 3. Set the next token (1, 2, 3...)
+                const nextTokenNumber = (count || 0) + 1;
+
+                // 4. Insert patient with the new token number
+                const { data, error } = await db.from('appointments').insert([{
+                    patient_name: document.getElementById('patientName').value,
+                    issue: document.getElementById('issue').value,
+                    priority: document.getElementById('priority').value,
+                    token_number: nextTokenNumber,
+                    status: 'waiting'
+                }]).select();
+
+                if (error) throw error;
+
+                if (data && data.length > 0) {
+                    // Success UI transition
+                    document.getElementById('bookingForm').style.display = 'none';
+                    document.getElementById('receipt').style.display = 'block';
+                    document.getElementById('tokenDisplay').innerText = data[0].token_number;
+                }
+
+            } catch (err) {
+                console.error("Booking Error:", err);
+                alert("Booking failed. Please check connection.");
+                btn.innerText = "Get Token";
+                btn.disabled = false;
+            }
+        };
+    </script>
+</body>
+</html>
